@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { unzipSync, strFromU8 } from 'https://esm.sh/fflate@0.8.2';
 
 const canvas = document.getElementById('viewer');
@@ -20,7 +21,7 @@ scene.background = new THREE.Color(0x0d1630);
 const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 2000);
 camera.position.set(2.2, 1.8, 2.2);
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -53,9 +54,35 @@ function createModelMaterial() {
     metalness: 0.08,
     roughness: 0.46,
     polygonOffset: true,
-    polygonOffsetFactor: 1,
-    polygonOffsetUnits: 1,
+    polygonOffsetFactor: 2,
+    polygonOffsetUnits: 2,
   });
+}
+
+function optimizeGeometry(geometry) {
+  let g = geometry.clone();
+  if (!g.index) g = mergeVertices(g, 1e-6);
+  if (!g.index) {
+    g.computeVertexNormals();
+    return g;
+  }
+
+  const src = g.index.array;
+  const clean = [];
+  const seen = new Set();
+
+  for (let i = 0; i < src.length; i += 3) {
+    const a = src[i], b = src[i + 1], c = src[i + 2];
+    if (a === b || b === c || a === c) continue;
+    const key = [a, b, c].sort((x, y) => x - y).join('_');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    clean.push(a, b, c);
+  }
+
+  g.setIndex(clean);
+  g.computeVertexNormals();
+  return g;
 }
 
 function setSize() {
@@ -221,10 +248,10 @@ function parse3MFArrayBuffer(buffer) {
     if (!def || stack.has(key)) return null;
 
     if (def.type === 'mesh') {
-      const g = new THREE.BufferGeometry();
+      let g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(def.pos, 3));
       g.setIndex(def.idx);
-      g.computeVertexNormals();
+      g = optimizeGeometry(g);
       return new THREE.Mesh(g, createModelMaterial());
     }
 
@@ -281,8 +308,8 @@ function loadFromArrayBuffer(name, buffer) {
 
   if (ext === 'stl') {
     const loader = new STLLoader();
-    const geometry = loader.parse(buffer);
-    geometry.computeVertexNormals();
+    let geometry = loader.parse(buffer);
+    geometry = optimizeGeometry(geometry);
     const material = createModelMaterial();
     const mesh = new THREE.Mesh(geometry, material);
     modelRoot = new THREE.Group();
