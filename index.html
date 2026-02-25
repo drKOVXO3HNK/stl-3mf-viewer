@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>STL/3MF Viewer</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.167.1/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.167.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <h1>STL / 3MF Viewer</h1>
+      <p>Загрузи файл и крути модель в 3D</p>
+    </header>
+
+    <section class="controls">
+      <label class="file-btn">
+        Выбрать файл
+        <input id="fileInput" type="file" accept=".stl,.3mf,model/stl,model/3mf" />
+      </label>
+      <button id="resetView">Сбросить вид</button>
+      <label class="toggle">
+        <input id="wireframe" type="checkbox" />
+        Wireframe
+      </label>
+      <span id="info">Файл не загружен</span>
+    </section>
+
+    <section id="dropZone" class="viewer-wrap">
+      <canvas id="viewer"></canvas>
+      <div class="drop-hint">Перетащи STL/3MF сюда</div>
+    </section>
+  </div>
+
+  <script type="module" src="viewer.js"></script>
+</body>
+</html>
