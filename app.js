@@ -159,11 +159,15 @@ function applyTransformFrom3mf(node, t) {
   if (!t) return;
   const m = t.trim().split(/\s+/).map(Number);
   if (m.length !== 12 || !m.every((n) => Number.isFinite(n))) return;
+
+  // 3MF stores transform in a 3x4 form:
+  // m00 m01 m02 m10 m11 m12 m20 m21 m22 tx ty tz
+  // Three.js Matrix4#set expects row-major parameters.
   const mat = new THREE.Matrix4();
   mat.set(
-    m[0], m[1], m[2], m[3],
-    m[4], m[5], m[6], m[7],
-    m[8], m[9], m[10], m[11],
+    m[0], m[3], m[6], m[9],
+    m[1], m[4], m[7], m[10],
+    m[2], m[5], m[8], m[11],
     0, 0, 0, 1
   );
   node.applyMatrix4(mat);
