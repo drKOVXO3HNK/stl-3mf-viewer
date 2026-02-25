@@ -40,9 +40,23 @@ scene.add(fillLight);
 
 const grid = new THREE.GridHelper(6, 24, 0x3f568f, 0x2a3a61);
 grid.position.y = -0.0001;
+grid.renderOrder = -1;
+const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
+for (const m of gridMaterials) m.depthWrite = false;
 scene.add(grid);
 
 let modelRoot = null;
+
+function createModelMaterial() {
+  return new THREE.MeshStandardMaterial({
+    color: 0xdbe6ff,
+    metalness: 0.08,
+    roughness: 0.46,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
+  });
+}
 
 function setSize() {
   const rect = canvas.parentElement.getBoundingClientRect();
@@ -211,7 +225,7 @@ function parse3MFArrayBuffer(buffer) {
       g.setAttribute('position', new THREE.Float32BufferAttribute(def.pos, 3));
       g.setIndex(def.idx);
       g.computeVertexNormals();
-      return new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xdbe6ff, metalness: 0.08, roughness: 0.46 }));
+      return new THREE.Mesh(g, createModelMaterial());
     }
 
     const next = new Set(stack);
@@ -269,7 +283,7 @@ function loadFromArrayBuffer(name, buffer) {
     const loader = new STLLoader();
     const geometry = loader.parse(buffer);
     geometry.computeVertexNormals();
-    const material = new THREE.MeshStandardMaterial({ color: 0xdbe6ff, metalness: 0.08, roughness: 0.46 });
+    const material = createModelMaterial();
     const mesh = new THREE.Mesh(geometry, material);
     modelRoot = new THREE.Group();
     modelRoot.add(mesh);
