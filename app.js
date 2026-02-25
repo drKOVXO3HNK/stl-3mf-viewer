@@ -20,17 +20,23 @@ scene.background = new THREE.Color(0x0d1630);
 const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 2000);
 camera.position.set(2.2, 1.8, 2.2);
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.target.set(0, 0.2, 0);
 
-scene.add(new THREE.HemisphereLight(0xcde0ff, 0x1a223a, 1.1));
-const dir = new THREE.DirectionalLight(0xffffff, 1.0);
-dir.position.set(4, 6, 5);
-scene.add(dir);
+scene.add(new THREE.HemisphereLight(0xcfe1ff, 0x16203a, 0.95));
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
+keyLight.position.set(4, 7, 5);
+scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(0x9bb8ff, 0.45);
+fillLight.position.set(-3, 3, -4);
+scene.add(fillLight);
 
 const grid = new THREE.GridHelper(6, 24, 0x3f568f, 0x2a3a61);
 grid.position.y = -0.0001;
@@ -82,8 +88,8 @@ function fitToView(object3d) {
 
   controls.target.copy(center);
   camera.position.set(center.x + fitDist * 1.1, center.y + fitDist * 0.9, center.z + fitDist * 1.1);
-  camera.near = maxSize / 1000;
-  camera.far = maxSize * 100;
+  camera.near = Math.max(maxSize / 120, 0.001);
+  camera.far = Math.max(maxSize * 18, 10);
   camera.updateProjectionMatrix();
   controls.update();
 }
@@ -205,7 +211,7 @@ function parse3MFArrayBuffer(buffer) {
       g.setAttribute('position', new THREE.Float32BufferAttribute(def.pos, 3));
       g.setIndex(def.idx);
       g.computeVertexNormals();
-      return new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xcfdcff, metalness: 0.12, roughness: 0.62 }));
+      return new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xdbe6ff, metalness: 0.08, roughness: 0.46 }));
     }
 
     const next = new Set(stack);
@@ -263,7 +269,7 @@ function loadFromArrayBuffer(name, buffer) {
     const loader = new STLLoader();
     const geometry = loader.parse(buffer);
     geometry.computeVertexNormals();
-    const material = new THREE.MeshStandardMaterial({ color: 0xcfdcff, metalness: 0.15, roughness: 0.6 });
+    const material = new THREE.MeshStandardMaterial({ color: 0xdbe6ff, metalness: 0.08, roughness: 0.46 });
     const mesh = new THREE.Mesh(geometry, material);
     modelRoot = new THREE.Group();
     modelRoot.add(mesh);

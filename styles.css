@@ -9,6 +9,9 @@ body {
   min-height: 100vh;
   display: grid;
   grid-template-rows: auto auto 1fr;
+  max-width: 980px;
+  margin: 0 auto;
+  width: 100%;
 }
 .topbar {
   padding: 14px 16px 6px;
@@ -46,6 +49,8 @@ button:hover, .file-btn:hover { background: #3356a0; }
 .viewer-wrap {
   position: relative;
   min-height: 0;
+  height: min(62vh, 620px);
+  border-top: 1px solid #22345a;
 }
 #viewer {
   width: 100%;
