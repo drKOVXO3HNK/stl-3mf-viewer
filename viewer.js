@@ -10,6 +10,10 @@ const wireframeInput = document.getElementById('wireframe');
 const info = document.getElementById('info');
 const dropZone = document.getElementById('dropZone');
 
+if (location.protocol === 'file:') {
+  info.textContent = 'Открой через сервер (например: python -m http.server 8080), file:// часто ломает загрузчики';
+}
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0d1630);
 
