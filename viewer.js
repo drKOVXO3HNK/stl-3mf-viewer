@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
-import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
+import { unzipSync, strFromU8 } from 'https://esm.sh/fflate@0.8.2';
 
 const canvas = document.getElementById('viewer');
 const fileInput = document.getElementById('fileInput');
@@ -104,6 +104,96 @@ function normalizeModel(root) {
   root.position.z += -center.z * scale;
 }
 
+function byLocalName(root, name) {
+  return [...root.getElementsByTagName('*')].filter((n) => n.localName === name);
+}
+
+function parse3MFArrayBuffer(buffer) {
+  const zip = unzipSync(new Uint8Array(buffer));
+  const modelPath = Object.keys(zip).find((k) => /(^|\/)3D\/.*\.model$/i.test(k)) || Object.keys(zip).find((k) => /\.model$/i.test(k));
+  if (!modelPath) throw new Error('В 3MF не найден .model');
+
+  const xmlText = strFromU8(zip[modelPath]);
+  const xml = new DOMParser().parseFromString(xmlText, 'application/xml');
+
+  const objectEls = byLocalName(xml, 'object');
+  const objects = new Map();
+
+  for (const objEl of objectEls) {
+    const objId = objEl.getAttribute('id');
+    if (!objId) continue;
+
+    const meshEl = [...objEl.children].find((n) => n.localName === 'mesh');
+    if (!meshEl) continue;
+
+    const verticesEl = [...meshEl.children].find((n) => n.localName === 'vertices');
+    const trianglesEl = [...meshEl.children].find((n) => n.localName === 'triangles');
+    if (!verticesEl || !trianglesEl) continue;
+
+    const vEls = [...verticesEl.children].filter((n) => n.localName === 'vertex');
+    const tEls = [...trianglesEl.children].filter((n) => n.localName === 'triangle');
+
+    const pos = [];
+    for (const v of vEls) {
+      pos.push(Number(v.getAttribute('x') || 0), Number(v.getAttribute('y') || 0), Number(v.getAttribute('z') || 0));
+    }
+
+    const idx = [];
+    for (const t of tEls) {
+      idx.push(Number(t.getAttribute('v1') || 0), Number(t.getAttribute('v2') || 0), Number(t.getAttribute('v3') || 0));
+    }
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+
+    const mesh = new THREE.Mesh(
+      g,
+      new THREE.MeshStandardMaterial({ color: 0xcfdcff, metalness: 0.12, roughness: 0.62 })
+    );
+    objects.set(objId, mesh);
+  }
+
+  const root = new THREE.Group();
+  const buildEls = byLocalName(xml, 'item');
+
+  if (buildEls.length) {
+    for (const item of buildEls) {
+      const id = item.getAttribute('objectid');
+      if (!id || !objects.has(id)) continue;
+      const inst = objects.get(id).clone();
+
+      const t = item.getAttribute('transform');
+      if (t) {
+        const m = t.trim().split(/\s+/).map(Number);
+        if (m.length === 12 && m.every((n) => Number.isFinite(n))) {
+          const mat = new THREE.Matrix4();
+          mat.set(
+            m[0], m[1], m[2], m[3],
+            m[4], m[5], m[6], m[7],
+            m[8], m[9], m[10], m[11],
+            0, 0, 0, 1
+          );
+          inst.applyMatrix4(mat);
+        }
+      }
+
+      root.add(inst);
+    }
+  }
+
+  if (!root.children.length) {
+    for (const mesh of objects.values()) root.add(mesh);
+  }
+
+  if (!root.children.length) {
+    throw new Error('Не удалось извлечь геометрию из 3MF');
+  }
+
+  return root;
+}
+
 function loadFromArrayBuffer(name, buffer) {
   const ext = name.toLowerCase().split('.').pop();
   clearModel();
@@ -117,8 +207,7 @@ function loadFromArrayBuffer(name, buffer) {
     modelRoot = new THREE.Group();
     modelRoot.add(mesh);
   } else if (ext === '3mf') {
-    const loader = new ThreeMFLoader();
-    modelRoot = loader.parse(buffer);
+    modelRoot = parse3MFArrayBuffer(buffer);
   } else {
     throw new Error('Поддерживаются только STL и 3MF');
   }
