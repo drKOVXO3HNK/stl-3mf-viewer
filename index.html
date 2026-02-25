@@ -3,43 +3,69 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>STL/3MF Viewer</title>
+  <title>Neofab 3D Viewer (STL/3MF)</title>
   <link rel="stylesheet" href="styles.css" />
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://unpkg.com/three@0.167.1/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.167.1/examples/jsm/"
-      }
-    }
-  </script>
+  <script src="https://cdn.jsdelivr.net/npm/online-3d-viewer@0.18.0/build/engine/o3dv.min.js"></script>
 </head>
 <body>
-  <div class="app">
-    <header class="topbar">
-      <h1>STL / 3MF Viewer</h1>
-      <p>Загрузи файл и крути модель в 3D</p>
-    </header>
+  <main class="app">
+    <h1>Neofab 3D Viewer</h1>
+    <p class="sub">Движок: 3dviewer.net · Форматы: STL, 3MF и др.</p>
 
     <section class="controls">
-      <label class="file-btn">
-        Выбрать файл
-        <input id="fileInput" type="file" accept=".stl,.3mf,model/stl,model/3mf" />
+      <label class="btn">
+        Выбрать STL/3MF
+        <input id="fileInput" type="file" accept=".stl,.3mf" multiple />
       </label>
-      <button id="resetView">Сбросить вид</button>
-      <label class="toggle">
-        <input id="wireframe" type="checkbox" />
-        Wireframe
-      </label>
-      <span id="info">Файл не загружен</span>
+      <button id="clearBtn" class="btn btn-ghost">Очистить</button>
+      <span id="status">Файл не загружен</span>
     </section>
 
-    <section id="dropZone" class="viewer-wrap">
-      <canvas id="viewer"></canvas>
-      <div class="drop-hint">Перетащи STL/3MF сюда</div>
-    </section>
-  </div>
+    <section id="viewer" class="viewer"></section>
+  </main>
 
-  <script type="module" src="app.js?v=7"></script>
+  <script>
+    const input = document.getElementById('fileInput');
+    const clearBtn = document.getElementById('clearBtn');
+    const status = document.getElementById('status');
+    const parent = document.getElementById('viewer');
+
+    let currentViewer = null;
+
+    function loadFiles(files) {
+      if (!files || files.length === 0) return;
+      parent.innerHTML = '';
+      currentViewer = OV.Init3DViewerFromFileList(parent, [...files], {
+        backgroundColor: new OV.RGBAColor(10, 18, 38, 255),
+        defaultColor: new OV.RGBColor(220, 230, 255),
+        edgeSettings: new OV.EdgeSettings(false, new OV.RGBColor(0, 0, 0), 1),
+      });
+      status.textContent = `Загружено: ${[...files].map(f => f.name).join(', ')}`;
+    }
+
+    input.addEventListener('change', (e) => loadFiles(e.target.files));
+
+    clearBtn.addEventListener('click', () => {
+      parent.innerHTML = '';
+      currentViewer = null;
+      input.value = '';
+      status.textContent = 'Файл не загружен';
+    });
+
+    // drag&drop
+    ['dragenter', 'dragover'].forEach((ev) => {
+      parent.addEventListener(ev, (e) => {
+        e.preventDefault();
+        parent.classList.add('drag');
+      });
+    });
+    ['dragleave', 'drop'].forEach((ev) => {
+      parent.addEventListener(ev, (e) => {
+        e.preventDefault();
+        parent.classList.remove('drag');
+      });
+    });
+    parent.addEventListener('drop', (e) => loadFiles(e.dataTransfer.files));
+  </script>
 </body>
 </html>
