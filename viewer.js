@@ -108,6 +108,21 @@ function byLocalName(root, name) {
   return [...root.getElementsByTagName('*')].filter((n) => n.localName === name);
 }
 
+function applyTransformFrom3mf(node, t) {
+  if (!t) return;
+  const m = t.trim().split(/\s+/).map(Number);
+  if (m.length !== 12 || !m.every((n) => Number.isFinite(n))) return;
+  const mat = new THREE.Matrix4();
+  // 3MF transform is 3x4 matrix (row-major)
+  mat.set(
+    m[0], m[1], m[2], m[3],
+    m[4], m[5], m[6], m[7],
+    m[8], m[9], m[10], m[11],
+    0, 0, 0, 1
+  );
+  node.applyMatrix4(mat);
+}
+
 function parse3MFArrayBuffer(buffer) {
   const zip = unzipSync(new Uint8Array(buffer));
   const modelPath = Object.keys(zip).find((k) => /(^|\/)3D\/.*\.model$/i.test(k)) || Object.keys(zip).find((k) => /\.model$/i.test(k));
@@ -117,74 +132,89 @@ function parse3MFArrayBuffer(buffer) {
   const xml = new DOMParser().parseFromString(xmlText, 'application/xml');
 
   const objectEls = byLocalName(xml, 'object');
-  const objects = new Map();
+  const objectDefs = new Map();
 
   for (const objEl of objectEls) {
     const objId = objEl.getAttribute('id');
     if (!objId) continue;
 
     const meshEl = [...objEl.children].find((n) => n.localName === 'mesh');
-    if (!meshEl) continue;
+    const componentsEl = [...objEl.children].find((n) => n.localName === 'components');
 
-    const verticesEl = [...meshEl.children].find((n) => n.localName === 'vertices');
-    const trianglesEl = [...meshEl.children].find((n) => n.localName === 'triangles');
-    if (!verticesEl || !trianglesEl) continue;
+    if (meshEl) {
+      const verticesEl = [...meshEl.children].find((n) => n.localName === 'vertices');
+      const trianglesEl = [...meshEl.children].find((n) => n.localName === 'triangles');
+      if (!verticesEl || !trianglesEl) continue;
 
-    const vEls = [...verticesEl.children].filter((n) => n.localName === 'vertex');
-    const tEls = [...trianglesEl.children].filter((n) => n.localName === 'triangle');
+      const vEls = [...verticesEl.children].filter((n) => n.localName === 'vertex');
+      const tEls = [...trianglesEl.children].filter((n) => n.localName === 'triangle');
 
-    const pos = [];
-    for (const v of vEls) {
-      pos.push(Number(v.getAttribute('x') || 0), Number(v.getAttribute('y') || 0), Number(v.getAttribute('z') || 0));
+      const pos = [];
+      for (const v of vEls) {
+        pos.push(Number(v.getAttribute('x') || 0), Number(v.getAttribute('y') || 0), Number(v.getAttribute('z') || 0));
+      }
+
+      const idx = [];
+      for (const t of tEls) {
+        idx.push(Number(t.getAttribute('v1') || 0), Number(t.getAttribute('v2') || 0), Number(t.getAttribute('v3') || 0));
+      }
+
+      objectDefs.set(objId, { type: 'mesh', pos, idx });
+    } else if (componentsEl) {
+      const comps = [...componentsEl.children]
+        .filter((n) => n.localName === 'component')
+        .map((c) => ({ objectId: c.getAttribute('objectid'), transform: c.getAttribute('transform') || '' }))
+        .filter((c) => c.objectId);
+      if (comps.length) objectDefs.set(objId, { type: 'components', comps });
+    }
+  }
+
+  function buildObject(objectId, stack = new Set()) {
+    const def = objectDefs.get(objectId);
+    if (!def) return null;
+    if (stack.has(objectId)) return null; // cycle guard
+
+    if (def.type === 'mesh') {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(def.pos, 3));
+      g.setIndex(def.idx);
+      g.computeVertexNormals();
+      return new THREE.Mesh(
+        g,
+        new THREE.MeshStandardMaterial({ color: 0xcfdcff, metalness: 0.12, roughness: 0.62 })
+      );
     }
 
-    const idx = [];
-    for (const t of tEls) {
-      idx.push(Number(t.getAttribute('v1') || 0), Number(t.getAttribute('v2') || 0), Number(t.getAttribute('v3') || 0));
+    const group = new THREE.Group();
+    const next = new Set(stack);
+    next.add(objectId);
+    for (const c of def.comps) {
+      const child = buildObject(c.objectId, next);
+      if (!child) continue;
+      applyTransformFrom3mf(child, c.transform);
+      group.add(child);
     }
-
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setIndex(idx);
-    g.computeVertexNormals();
-
-    const mesh = new THREE.Mesh(
-      g,
-      new THREE.MeshStandardMaterial({ color: 0xcfdcff, metalness: 0.12, roughness: 0.62 })
-    );
-    objects.set(objId, mesh);
+    return group.children.length ? group : null;
   }
 
   const root = new THREE.Group();
-  const buildEls = byLocalName(xml, 'item');
+  const buildEl = byLocalName(xml, 'build')[0];
+  const buildItems = buildEl ? [...buildEl.children].filter((n) => n.localName === 'item') : [];
 
-  if (buildEls.length) {
-    for (const item of buildEls) {
-      const id = item.getAttribute('objectid');
-      if (!id || !objects.has(id)) continue;
-      const inst = objects.get(id).clone();
-
-      const t = item.getAttribute('transform');
-      if (t) {
-        const m = t.trim().split(/\s+/).map(Number);
-        if (m.length === 12 && m.every((n) => Number.isFinite(n))) {
-          const mat = new THREE.Matrix4();
-          mat.set(
-            m[0], m[1], m[2], m[3],
-            m[4], m[5], m[6], m[7],
-            m[8], m[9], m[10], m[11],
-            0, 0, 0, 1
-          );
-          inst.applyMatrix4(mat);
-        }
-      }
-
-      root.add(inst);
-    }
+  for (const item of buildItems) {
+    const id = item.getAttribute('objectid');
+    if (!id) continue;
+    const node = buildObject(id);
+    if (!node) continue;
+    applyTransformFrom3mf(node, item.getAttribute('transform') || '');
+    root.add(node);
   }
 
   if (!root.children.length) {
-    for (const mesh of objects.values()) root.add(mesh);
+    for (const id of objectDefs.keys()) {
+      const node = buildObject(id);
+      if (node) root.add(node);
+    }
   }
 
   if (!root.children.length) {
