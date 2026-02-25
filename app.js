@@ -124,94 +124,129 @@ function applyTransformFrom3mf(node, t) {
 
 function parse3MFArrayBuffer(buffer) {
   const zip = unzipSync(new Uint8Array(buffer));
-  const modelPath = Object.keys(zip).find((k) => /(^|\/)3D\/.*\.model$/i.test(k)) || Object.keys(zip).find((k) => /\.model$/i.test(k));
-  if (!modelPath) throw new Error('В 3MF не найден .model');
+  const modelPaths = Object.keys(zip).filter((k) => /\.model$/i.test(k));
+  if (!modelPaths.length) throw new Error('В 3MF не найден .model');
 
-  const xmlText = strFromU8(zip[modelPath]);
-  const xml = new DOMParser().parseFromString(xmlText, 'application/xml');
+  const norm = (p) => p.replace(/^\/+/, '').replace(/\\/g, '/');
+  const joinRef = (base, ref) => {
+    const r = norm(ref || '');
+    if (!r) return norm(base);
+    if (r.includes(':/') || r.startsWith('3D/')) return r;
+    const baseDir = norm(base).split('/').slice(0, -1).join('/');
+    const parts = `${baseDir}/${r}`.split('/');
+    const out = [];
+    for (const p of parts) {
+      if (!p || p === '.') continue;
+      if (p === '..') out.pop();
+      else out.push(p);
+    }
+    return out.join('/');
+  };
 
-  const objectEls = byLocalName(xml, 'object');
-  const objectDefs = new Map();
+  const docs = new Map();
+  const objectDefs = new Map(); // key: modelPath#objectId
 
-  for (const objEl of objectEls) {
-    const objId = objEl.getAttribute('id');
-    if (!objId) continue;
+  for (const p of modelPaths) {
+    const modelPath = norm(p);
+    const xml = new DOMParser().parseFromString(strFromU8(zip[p]), 'application/xml');
+    docs.set(modelPath, xml);
 
-    const meshEl = [...objEl.children].find((n) => n.localName === 'mesh');
-    const componentsEl = [...objEl.children].find((n) => n.localName === 'components');
+    for (const objEl of byLocalName(xml, 'object')) {
+      const objId = objEl.getAttribute('id');
+      if (!objId) continue;
+      const key = `${modelPath}#${objId}`;
 
-    if (meshEl) {
-      const verticesEl = [...meshEl.children].find((n) => n.localName === 'vertices');
-      const trianglesEl = [...meshEl.children].find((n) => n.localName === 'triangles');
-      if (!verticesEl || !trianglesEl) continue;
+      const meshEl = [...objEl.children].find((n) => n.localName === 'mesh');
+      const componentsEl = [...objEl.children].find((n) => n.localName === 'components');
 
-      const vEls = [...verticesEl.children].filter((n) => n.localName === 'vertex');
-      const tEls = [...trianglesEl.children].filter((n) => n.localName === 'triangle');
+      if (meshEl) {
+        const verticesEl = [...meshEl.children].find((n) => n.localName === 'vertices');
+        const trianglesEl = [...meshEl.children].find((n) => n.localName === 'triangles');
+        if (!verticesEl || !trianglesEl) continue;
 
-      const pos = [];
-      for (const v of vEls) {
-        pos.push(Number(v.getAttribute('x') || 0), Number(v.getAttribute('y') || 0), Number(v.getAttribute('z') || 0));
+        const pos = [];
+        for (const v of [...verticesEl.children].filter((n) => n.localName === 'vertex')) {
+          pos.push(Number(v.getAttribute('x') || 0), Number(v.getAttribute('y') || 0), Number(v.getAttribute('z') || 0));
+        }
+
+        const idx = [];
+        for (const t of [...trianglesEl.children].filter((n) => n.localName === 'triangle')) {
+          idx.push(Number(t.getAttribute('v1') || 0), Number(t.getAttribute('v2') || 0), Number(t.getAttribute('v3') || 0));
+        }
+
+        objectDefs.set(key, { type: 'mesh', pos, idx });
+      } else if (componentsEl) {
+        const comps = [...componentsEl.children]
+          .filter((n) => n.localName === 'component')
+          .map((c) => ({
+            objectId: c.getAttribute('objectid'),
+            path: c.getAttribute('path') || '',
+            transform: c.getAttribute('transform') || '',
+          }))
+          .filter((c) => c.objectId);
+        if (comps.length) objectDefs.set(key, { type: 'components', comps });
       }
-
-      const idx = [];
-      for (const t of tEls) {
-        idx.push(Number(t.getAttribute('v1') || 0), Number(t.getAttribute('v2') || 0), Number(t.getAttribute('v3') || 0));
-      }
-
-      objectDefs.set(objId, { type: 'mesh', pos, idx });
-    } else if (componentsEl) {
-      const comps = [...componentsEl.children]
-        .filter((n) => n.localName === 'component')
-        .map((c) => ({ objectId: c.getAttribute('objectid'), transform: c.getAttribute('transform') || '' }))
-        .filter((c) => c.objectId);
-      if (comps.length) objectDefs.set(objId, { type: 'components', comps });
     }
   }
 
-  function buildObject(objectId, stack = new Set()) {
-    const def = objectDefs.get(objectId);
-    if (!def) return null;
-    if (stack.has(objectId)) return null;
+  const pickMainModel = () => {
+    const preferred = modelPaths.map(norm).find((p) => /(^|\/)3D\/3dmodel\.model$/i.test(p));
+    return preferred || norm(modelPaths[0]);
+  };
+
+  const buildObject = (modelPath, objectId, stack = new Set()) => {
+    const m = norm(modelPath);
+    const key = `${m}#${objectId}`;
+    const def = objectDefs.get(key);
+    if (!def || stack.has(key)) return null;
 
     if (def.type === 'mesh') {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(def.pos, 3));
       g.setIndex(def.idx);
       g.computeVertexNormals();
-      return new THREE.Mesh(
-        g,
-        new THREE.MeshStandardMaterial({ color: 0xcfdcff, metalness: 0.12, roughness: 0.62 })
-      );
+      return new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xcfdcff, metalness: 0.12, roughness: 0.62 }));
     }
 
-    const group = new THREE.Group();
     const next = new Set(stack);
-    next.add(objectId);
+    next.add(key);
+    const group = new THREE.Group();
+
     for (const c of def.comps) {
-      const child = buildObject(c.objectId, next);
+      const childModel = c.path ? joinRef(m, c.path) : m;
+      const child = buildObject(childModel, c.objectId, next);
       if (!child) continue;
       applyTransformFrom3mf(child, c.transform);
       group.add(child);
     }
+
     return group.children.length ? group : null;
-  }
+  };
 
   const root = new THREE.Group();
-  const buildEl = byLocalName(xml, 'build')[0];
-  const buildItems = buildEl ? [...buildEl.children].filter((n) => n.localName === 'item') : [];
+  const mainModel = pickMainModel();
+  const mainXml = docs.get(mainModel);
 
-  for (const item of buildItems) {
-    const id = item.getAttribute('objectid');
-    if (!id) continue;
-    const node = buildObject(id);
-    if (!node) continue;
-    applyTransformFrom3mf(node, item.getAttribute('transform') || '');
-    root.add(node);
+  if (mainXml) {
+    const buildEl = byLocalName(mainXml, 'build')[0];
+    const buildItems = buildEl ? [...buildEl.children].filter((n) => n.localName === 'item') : [];
+
+    for (const item of buildItems) {
+      const id = item.getAttribute('objectid');
+      const path = item.getAttribute('path') || '';
+      if (!id) continue;
+      const itemModel = path ? joinRef(mainModel, path) : mainModel;
+      const node = buildObject(itemModel, id);
+      if (!node) continue;
+      applyTransformFrom3mf(node, item.getAttribute('transform') || '');
+      root.add(node);
+    }
   }
 
   if (!root.children.length) {
-    for (const id of objectDefs.keys()) {
-      const node = buildObject(id);
+    for (const key of objectDefs.keys()) {
+      const [m, id] = key.split('#');
+      const node = buildObject(m, id);
       if (node) root.add(node);
     }
   }
